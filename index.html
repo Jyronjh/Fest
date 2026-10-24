@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Visitor attendance</title>
+<style>
+  body{font:16px system-ui,sans-serif;margin:0;background:#f5f6f3;color:#22342d}
+  main{max-width:680px;margin:auto;padding:24px}h1{font-size:26px}
+  section{background:white;padding:20px;margin:18px 0;border:1px solid #dce3dc;border-radius:8px}
+  #count{font-size:48px;font-weight:700}button,input{font:inherit;padding:10px;border-radius:5px;border:1px solid #87998b}
+  button{background:#235d43;color:white;cursor:pointer}button:disabled{opacity:.55;cursor:wait}
+  table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:9px 0;border-bottom:1px solid #eee}
+  #summary{line-height:1.6;white-space:pre-wrap}footer{font-size:14px;overflow-wrap:anywhere}#status{min-height:24px}
+</style>
+<main>
+  <h1>Visitor attendance</h1>
+  <label for="day">Date </label><input id="day" type="date" value="{{TODAY}}">
+  <section aria-live="polite"><div id="count">—</div><div>visitors on selected day</div></section>
+  <section><h2>Attendance summary</h2><p id="summary">Summary pending</p>
+    <button id="generate">Generate summary</button><p id="status" role="status"></p>
+  </section>
+  <section><h2>Visit timestamps</h2><table><thead><tr><th>Local arrival time</th></tr></thead><tbody id="rows"></tbody></table></section>
+  <footer>Refreshes every 10 seconds · <a href="{{LAN_URL}}">{{LAN_URL}}</a></footer>
+</main>
+<script>
+  const day=document.querySelector('#day'), button=document.querySelector('#generate'), status=document.querySelector('#status');
+  let today='{{TODAY}}', followingToday=true, busy=false;
+  async function refresh(){
+    const selected=day.value;
+    try{
+      const responses=await Promise.all(['/api/visits','/api/report'].map(p=>fetch(p+'?date='+selected,{cache:'no-store'})));
+      if(responses.some(r=>!r.ok)) throw Error('Could not load attendance.');
+      const [v,r]=await Promise.all(responses.map(r=>r.json()));
+      if(selected!==day.value)return;
+      today=v.today;
+      if(followingToday && day.value!==today){day.value=today;return refresh();}
+      button.disabled=busy || day.value!==today;
+      document.querySelector('#count').textContent=v.count;
+      document.querySelector('#summary').textContent=r.text;
+      const rows=document.querySelector('#rows'); rows.replaceChildren();
+      for(const ts of v.timestamps){const tr=rows.insertRow();tr.insertCell().textContent=ts.replace('T',' ');}
+      if(!v.count){rows.insertRow().insertCell().textContent='No visits recorded.';}
+    }catch(e){status.textContent=e.message;}
+  }
+  day.onchange=()=>{followingToday=false;button.disabled=day.value!==today;refresh();};
+  button.onclick=async()=>{
+    const pin={{PIN_REQUIRED}} ? prompt('Admin PIN') : '';
+    if(pin===null)return;
+    busy=true;button.disabled=true;status.textContent='Generating today’s summary…';
+    try{
+      const r=await fetch('/api/report/generate',{method:'POST',headers:{'X-Admin-Pin':pin}});
+      if(!r.ok)throw Error(r.status===403?'Incorrect PIN.':r.status===409?'A summary is already being generated.':'Summary request failed.');
+      status.textContent='';await refresh();
+    }catch(e){status.textContent=e.message;}finally{busy=false;button.disabled=day.value!==today;}
+  };
+  refresh();setInterval(()=>{if(!busy)refresh();},10000);
+</script>
+</html>
